@@ -75,8 +75,8 @@ Three levels, one machine each — no cluster, no cloud.
 | Storage | NVMe SSD — 1 TB system + 4 TB data and models |
 | AI runtimes | Ollama and LM Studio |
 
-Runs 7B–14B models fully on the GPU. Larger models (20–27B) still run, split between GPU
-and system RAM, but slower.
+Runs 7B–14B models fully on the GPU, at roughly 35 tokens per second. Larger models (20–27B)
+still run, split between GPU and system RAM, but slower.
 
 ### Example machines — Developer and High-end
 
@@ -179,7 +179,31 @@ journalctl -u ollama | grep "layers to GPU"   # e.g. "offloaded 33/33 layers to 
    Models bigger than the GPU (13–17 GB on a 12 GB card) never run 100% on the GPU — they
    always split with system RAM. Freeing the GPU moves them from zero GPU layers to partial.
 
-2. **Kernel upgrades — install kernel headers first.** On Ubuntu the NVIDIA modules are built
+   **With one GPU, expect this:** only one model fits in GPU memory at a time, so a request for
+   a different model swaps it (~6–10 s), and requests are queued rather than answered in
+   parallel. Plan which model is the everyday one.
+
+2. **More context in the same memory — quantize the KV cache.** The context (everything the
+   model is "reading") is held in GPU memory next to the model. Stored in 8-bit instead of the
+   default 16-bit, it takes about half the space, with no measurable quality loss.
+
+   On this system, with the same 12 GB card:
+
+   | Model | Context before | Context after |
+   |---|---|---|
+   | qwen3-14b | 12,288 tokens | **24,576** |
+   | gemma-4-12b | 12,288 tokens | **49,152** |
+
+   Two settings did it: 8-bit KV cache, and **one prediction slot per model** instead of four —
+   slots split the context between simultaneous requests, so fewer slots means more context each.
+
+   - **LM Studio:** KV cache type and slots are in the model's load settings
+   - **Ollama:** `OLLAMA_KV_CACHE_TYPE=q8_0` (or `q4_0` for a quarter of the memory, with some
+     quality loss) and `OLLAMA_NUM_PARALLEL` (Step 3)
+
+   Worth doing when prompts fail for exceeding the context, before buying a bigger GPU.
+
+3. **Kernel upgrades — install kernel headers first.** On Ubuntu the NVIDIA modules are built
    at install time and need the matching headers. Without them the driver is missing after
    reboot and Ollama silently runs on the CPU. Install `linux-headers-<version>` before the new
    kernel, and check `nvidia-smi` after rebooting.
@@ -296,7 +320,7 @@ macOS: `launchctl setenv <NAME> <value>`, then restart the app. Windows: set the
 | `OLLAMA_KEEP_ALIVE` | 5 minutes | how long an idle model stays in memory |
 | `OLLAMA_CONTEXT_LENGTH` | 4096 tokens | default context window |
 | `OLLAMA_FLASH_ATTENTION` | automatic | `1` forces it on — less memory for long contexts |
-| `OLLAMA_KV_CACHE_TYPE` | `f16` | `q8_0` halves context memory, `q4_0` quarters it (small quality loss) |
+| `OLLAMA_KV_CACHE_TYPE` | `f16` | `q8_0` halves context memory, `q4_0` quarters it (small quality loss) — see Step 2, lesson 2 |
 | `OLLAMA_MAX_LOADED_MODELS` | 3 per GPU | how many models can be loaded at once |
 | `OLLAMA_NUM_PARALLEL` | 1 | parallel requests per model |
 
@@ -331,7 +355,9 @@ journalctl -e -u ollama  # service log (Linux)
 | Engine | CUDA (llama.cpp) |
 | API server | port 1234, open on the local network |
 | Model loading | on request (JIT), unloaded after 1 hour idle (Step 2, lesson 1) |
-| Default context | 8192 globally; saved per model where needed (e.g. 12288 for qwen3-14b) |
+| Context | raised per model with 8-bit KV cache: 24,576 for qwen3-14b, 49,152 for gemma-4-12b (Step 2, lesson 2) |
+| Prediction slots | 1 per model, so one request gets the whole context |
+| Speed | ≈ 35 tokens/s on 12–14B models |
 | Models stored in | `~/.lmstudio/models` (the default) |
 
 **Settings that matter**
@@ -342,6 +368,8 @@ journalctl -e -u ollama  # service log (Linux)
 | Just-in-time (JIT) loading | Developer → server settings | a request loads the model it needs |
 | Idle TTL (`JIT model TTL`) | Developer → server settings | unloads request-loaded models after idle time |
 | Default context length | Settings | context for new loads; can be saved per model |
+| KV cache quantization | model load settings | 8-bit instead of 16-bit — much more context in the same memory (Step 2, lesson 2) |
+| Prediction slots | model load settings | how many requests share the context. 1 slot = full context for one request |
 | Models folder | My Models | where models are stored — move it to `System-AI/LM-Studio` (Step 1) |
 | Run server on login | Settings | keeps the API up without opening the window |
 
