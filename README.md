@@ -38,7 +38,7 @@ AI the way GeneMolX does.
 repository:
 
 - **Local AI foundation** — machine, GPU, local models *(this repository)*
-- A database "brain" — knowledge, memory and data (Supabase)
+- [**AI-Brain_Build**](https://github.com/bio-silico/AI-Brain_Build) — the database "brain": knowledge, memory and data (self-hosted Supabase, with ingestion)
 - AI agents — n8n
 - Working with your data through RAG and memory — Open WebUI
 - Exploring and querying your databases — LangChain (Python)
